@@ -191,8 +191,8 @@ class psfmod:
                     dec_col="DEC",
                     ra_units="deg",
                     dec_units="deg",
-                    g1_col="G1_DATA_MEANSUB",
-                    g2_col="G2_DATA_MEANSUB",
+                    g1_col="G1_MODEL_MEANSUB",
+                    g2_col="G2_MODEL_MEANSUB",
                     patch_centers=self.patch_centers,
                 )
                 cat_depsf = treecorr.Catalog(
@@ -233,8 +233,8 @@ class psfmod:
                     dec_col="DEC",
                     ra_units="deg",
                     dec_units="deg",
-                    g1_col="G1_DATA_MEANSUB",
-                    g2_col="G2_DATA_MEANSUB",
+                    g1_col="G1_MODEL_MEANSUB",
+                    g2_col="G2_MODEL_MEANSUB",
                     patch_centers=self.patch_centers,
                 )
                 cat_depsf = treecorr.Catalog(
