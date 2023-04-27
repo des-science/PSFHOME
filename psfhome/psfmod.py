@@ -5,7 +5,7 @@ import treecorr
 import scipy
 import pickle
 from scipy import stats
-
+import os
 
 class psfmod:
 
@@ -39,6 +39,10 @@ class psfmod:
         seeing_weight=False,
         include_pp_cov=True,
         shear_convention=False,
+        patch_centers=None,
+        psf_file=None,
+        save_gp_cov=False, 
+        outpath=None,
     ):
         """
         Initialization
@@ -75,6 +79,10 @@ class psfmod:
         self.num_of_corr = 4
         self.include_pp_cov = include_pp_cov
         self.shear_convention = shear_convention
+        self.patch_centers = patch_centers
+        self.psf_file = psf_file
+        self.save_gp_cov = save_gp_cov
+        self.outpath = outpath
 
     def go(self):
 
@@ -165,100 +173,99 @@ class psfmod:
             # load galaxy shape and PSF moments tables
             cat_egal = treecorr.Catalog(
                 self.gal_shape_file,
-                w_col="weight",
+                w_col="w",
                 ra_col="ra",
                 dec_col="dec",
                 ra_units="deg",
                 dec_units="deg",
-                g1_col="shear1",
-                g2_col="shear2",
-                npatch=20,
-                kmeans_init="kmeans++",
+                g1_col="g1",
+                g2_col="g2",
+                patch_centers=self.patch_centers
             )
 
             if self.nonpsf:
 
                 cat_epsf = treecorr.Catalog(
-                    "data/epsf_nonpsf.fits",
-                    ra_col="ra",
-                    dec_col="dec",
+                    self.psf_file,
+                    ra_col="RA",
+                    dec_col="DEC",
                     ra_units="deg",
                     dec_units="deg",
-                    g1_col="shear1",
-                    g2_col="shear2",
-                    patch_centers=cat_egal.patch_centers,
+                    g1_col="G1_DATA_MEANSUB",
+                    g2_col="G2_DATA_MEANSUB",
+                    patch_centers=self.patch_centers,
                 )
                 cat_depsf = treecorr.Catalog(
-                    "data/depsf_nonpsf.fits",
-                    ra_col="ra",
-                    dec_col="dec",
+                    self.psf_file,
+                    ra_col="RA",
+                    dec_col="DEC",
                     ra_units="deg",
                     dec_units="deg",
-                    g1_col="shear1",
-                    g2_col="shear2",
-                    patch_centers=cat_egal.patch_centers,
+                    g1_col="DELTA_G1_MEANSUB",
+                    g2_col="DELTA_G2_MEANSUB",
+                    patch_centers=self.patch_centers,
                 )
                 cat_dMpsf = treecorr.Catalog(
-                    "data/dMpsf_nonpsf.fits",
-                    ra_col="ra",
-                    dec_col="dec",
+                    self.psf_file,
+                    ra_col="RA",
+                    dec_col="DEC",
                     ra_units="deg",
                     dec_units="deg",
-                    g1_col="shear1",
-                    g2_col="shear2",
-                    patch_centers=cat_egal.patch_centers,
+                    g1_col="DELTA_G41_MEANSUB",
+                    g2_col="DELTA_G42_MEANSUB",
+                    patch_centers=self.patch_centers,
                 )
                 cat_Mpsf = treecorr.Catalog(
-                    "data/Mpsf_nonpsf.fits",
-                    ra_col="ra",
-                    dec_col="dec",
+                    self.psf_file,
+                    ra_col="RA",
+                    dec_col="DEC",
                     ra_units="deg",
                     dec_units="deg",
-                    g1_col="shear1",
-                    g2_col="shear2",
-                    patch_centers=cat_egal.patch_centers,
+                    g1_col="G41_DATA_MEANSUB",
+                    g2_col="G42_DATA_MEANSUB",
+                    patch_centers=self.patch_centers,
                 )
             else:
 
                 cat_epsf = treecorr.Catalog(
-                    "data/epsf_psf.fits",
-                    ra_col="ra",
-                    dec_col="dec",
+                    self.psf_file,
+                    ra_col="RA",
+                    dec_col="DEC",
                     ra_units="deg",
                     dec_units="deg",
-                    g1_col="shear1",
-                    g2_col="shear2",
-                    patch_centers=cat_egal.patch_centers,
+                    g1_col="G1_DATA_MEANSUB",
+                    g2_col="G2_DATA_MEANSUB",
+                    patch_centers=self.patch_centers,
                 )
                 cat_depsf = treecorr.Catalog(
-                    "data/depsf_psf.fits",
-                    ra_col="ra",
-                    dec_col="dec",
+                    self.psf_file,
+                    ra_col="RA",
+                    dec_col="DEC",
                     ra_units="deg",
                     dec_units="deg",
-                    g1_col="shear1",
-                    g2_col="shear2",
-                    patch_centers=cat_egal.patch_centers,
+                    g1_col="DELTA_G1_MEANSUB",
+                    g2_col="DELTA_G2_MEANSUB",
+                    patch_centers=self.patch_centers,
                 )
                 cat_dMpsf = treecorr.Catalog(
-                    "data/dMpsf_psf.fits",
-                    ra_col="ra",
-                    dec_col="dec",
+                    self.psf_file,
+                    ra_col="RA",
+                    dec_col="DEC",
                     ra_units="deg",
                     dec_units="deg",
-                    g1_col="shear1",
-                    g2_col="shear2",
-                    patch_centers=cat_egal.patch_centers,
+                    g1_col="DELTA_G41_MEANSUB",
+                    g2_col="DELTA_G42_MEANSUB",
+                    patch_centers=self.patch_centers,
                 )
                 cat_Mpsf = treecorr.Catalog(
-                    "data/Mpsf_psf.fits",
-                    ra_col="ra",
-                    dec_col="dec",
+                    self.psf_file,
+                    ra_col="RA",
+                    dec_col="DEC",
                     ra_units="deg",
                     dec_units="deg",
-                    g1_col="shear1",
-                    g2_col="shear2",
-                    patch_centers=cat_egal.patch_centers,
+                    g1_col="G41_DATA_MEANSUB",
+                    g2_col="G42_DATA_MEANSUB",
+                    patch_centers=self.patch_centers,
                 )
 
             gal_cat = cat_egal
@@ -282,12 +289,25 @@ class psfmod:
 
             # measure the galaxy-PSF cross correlations
             gp_corr_xip = np.zeros(shape=(num_of_corr, 20))
-            # gp_corr_cov = np.zeros(shape = (num_of_corr,20,20))
-
+            gp_corr_cov = np.zeros(shape = (num_of_corr,20,20))
+            gp_corr_list = []
             for i in range(num_of_corr):
-                logr, this_xip, this_cov, _ = self.get_corr(gal_cat, psf_cat_list[i])
-                # gp_corr_cov[i] = this_cov
+                print('running gp correlations...', i)
+                logr, this_xip, this_cov, gp_corr_item = self.get_corr(gal_cat, psf_cat_list[i])
                 gp_corr_xip[i] = this_xip
+                gp_corr_cov[i] = this_cov
+                gp_corr_list.append(gp_corr_item)
+
+            slice_ = []
+            for i in range(num_of_corr):
+                slice_.append(np.arange(0, 20) + i * 20)
+            slice_ = np.array(slice_).reshape(-1)
+
+            self.gp_joint_cov = treecorr.estimate_multi_cov(gp_corr_list, "jackknife")[
+                slice_, :
+            ][:, slice_]
+            if self.save_gp_cov:
+                np.savetxt(self.cov_file, self.gp_joint_cov)
 
             # measure the PSF-PSF correlations
             pp_corr_xip = np.zeros(shape=(num_of_corr, num_of_corr, 20))
@@ -297,6 +317,7 @@ class psfmod:
 
             for i in range(num_of_corr):
                 for j in range(num_of_corr):
+                    print('running pp correlations...', i, j)
                     logr, this_xip, this_cov, pp_corr_item = self.get_corr(
                         psf_cat_list[i], psf_cat_list[j]
                     )
