@@ -119,15 +119,19 @@ def read_mdet_h5(datafile, keys, response=False, subtract_mean_shear=False):
         data['g1'] /= R
         data['g2'] /= R
 
+    mean_g1 = _wmean(data['g1'], data['w'])
+    mean_g2 = _wmean(data['g2'], data['w'])
+    std_g1 = np.var(data['g1'])
+    std_g2 = np.var(data['g2'])
+    mean_shear = [mean_g1, mean_g2, std_g1, std_g2]
     # mean shear subtraction
     if subtract_mean_shear:
-        g1 = _wmean(data["g1"],data["w"])
-        g2 = _wmean(data["g2"],data["w"])
-        print('mean g1 g2 =(%1.8f,%1.8f)'%(g1, g2))          
-        data['g1'] -= g1
-        data['g2'] -= g2   
+        print('subtracting mean shear')
+        print('mean g1 g2 =(%1.8f,%1.8f)'%(mean_g1, mean_g2))          
+        data['g1'] -= mean_g1
+        data['g2'] -= mean_g2
 
-    return data
+    return data, mean_shear
 
 
 def get_corr(cat1, cat2, var_method, min_sep=0.5, max_sep=250, nbins=32, ximmode=False):
@@ -175,10 +179,10 @@ def run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers,
 
         # measure the psf moments average, e1 and e2
         psf_const1 = np.array(
-            [np.mean(psf_cat_list[i].g1) for i in range(num_of_corr)]
+            [np.average(psf_cat_list[i].g1, weights=psf_cat_list[i].w) for i in range(num_of_corr)]
         )
         psf_const2 = np.array(
-            [np.mean(psf_cat_list[i].g2) for i in range(num_of_corr)]
+            [np.average(psf_cat_list[i].g2, weights=psf_cat_list[i].w) for i in range(num_of_corr)]
         )
 
         gp_corr_xip = np.zeros(shape=(num_of_corr, nbins))
@@ -283,16 +287,13 @@ def main():
     # read some variables for later use in this function
     num_of_corr = num_of_corr
 
-    if star_weight_file is None:
-        l = len(fio.read(psf_file))
-        wstar = np.ones(l)
-    else:
-        wstar = np.load(star_weight_file)
+    def _wmean(q,w):
+        return np.sum(q*w)/np.sum(w)
 
     # load galaxy shape and PSF moments tables
     if hdf5:
         keys = ['ra', 'dec', 'g1', 'g2', 'w']
-        gal_data = read_mdet_h5(gal_shape_file, keys, response=True, subtract_mean_shear=subtract_mean_shear)
+        gal_data, mean_shear = read_mdet_h5(gal_shape_file, keys, response=True, subtract_mean_shear=subtract_mean_shear)
         cat_egal = treecorr.Catalog(ra=gal_data['ra'], 
                                 dec=gal_data['dec'], 
                                 ra_units='deg', 
@@ -333,64 +334,63 @@ def main():
     cat_epsf = treecorr.Catalog(
         ra=cat['RA'],
         dec=cat['DEC'],
-        g1=cat[p1],
-        g2=cat[p2],
+        g1=cat[p1] - np.average(cat[p1], weights=cat['STAR_GAL_GI_WEIGHT']),
+        g2=cat[p2] - np.average(cat[p2], weights=cat['STAR_GAL_GI_WEIGHT']),
         ra_units="deg",
         dec_units="deg",
         patch_centers=patch_centers,
-        w=wstar
+        w=cat['STAR_GAL_GI_WEIGHT']
     )
     cat_depsf = treecorr.Catalog(
         ra=cat['RA'],
         dec=cat['DEC'],
-        g1=cat[q1],
-        g2=cat[q2],
+        g1=cat[q1] - np.average(cat[q1], weights=cat['STAR_GAL_GI_WEIGHT']),
+        g2=cat[q2] - np.average(cat[q2], weights=cat['STAR_GAL_GI_WEIGHT']),
         ra_units="deg",
         dec_units="deg",
         patch_centers=patch_centers,
-        w=wstar
+        w=cat['STAR_GAL_GI_WEIGHT']
     )
     cat_Mpsf = treecorr.Catalog(
         ra=cat['RA'],
         dec=cat['DEC'],
-        g1=cat[p41],
-        g2=cat[p42],
+        g1=cat[p41] - np.average(cat[p41], weights=cat['STAR_GAL_GI_WEIGHT']),
+        g2=cat[p42] - np.average(cat[p42], weights=cat['STAR_GAL_GI_WEIGHT']),
         ra_units="deg",
         dec_units="deg",
         patch_centers=patch_centers,
-        w=wstar
+        w=cat['STAR_GAL_GI_WEIGHT']
     )
     cat_dMpsf = treecorr.Catalog(
         ra=cat['RA'],
         dec=cat['DEC'],
-        g1=cat[q41],
-        g2=cat[q42],
+        g1=cat[q41] - np.average(cat[q41], weights=cat['STAR_GAL_GI_WEIGHT']),
+        g2=cat[q42] - np.average(cat[q42], weights=cat['STAR_GAL_GI_WEIGHT']),
         ra_units="deg",
         dec_units="deg",
         patch_centers=patch_centers,
-        w=wstar
+        w=cat['STAR_GAL_GI_WEIGHT']
     )
 
     gal_cat = cat_egal
-
-    # measure the mean galxy shape, that's the last two data points
-    e_gal_1_mean = np.mean(np.array(gal_cat.g1))
-    e_gal_1_var = np.var(np.array(gal_cat.g1))
-    e_gal_2_mean = np.mean(np.array(gal_cat.g2))
-    e_gal_2_var = np.var(np.array(gal_cat.g2))
-
-    egal_mean = np.array([e_gal_1_mean, e_gal_2_mean])
-
     # define the PSF moments list, [second leakage, second modeling, fourth leakage, fourth modeling]
     psf_cat_list = [cat_epsf, cat_depsf, cat_Mpsf, cat_dMpsf]
 
-    # measure the psf moments average, e1 and e2
-    psf_const1 = np.array(
-        [np.mean(psf_cat_list[i].g1) for i in range(num_of_corr)]
-    )
-    psf_const2 = np.array(
-        [np.mean(psf_cat_list[i].g2) for i in range(num_of_corr)]
-    )
+    if const:
+        egal_mean = np.zeros(2)
+        psf_const1 = np.zeros(num_of_corr)
+        psf_const2 = np.zeros(num_of_corr)
+    else:
+        # measure the mean galxy shape, that's the last two data points
+        egal_mean = np.array([mean_shear[0], mean_shear[1]])
+
+        # measure the psf moments average, e1 and e2
+        psf_const1 = np.array(
+            [_wmean(psf_cat_list[i].g1, psf_cat_list[i].w) for i in range(num_of_corr)]
+        )
+        psf_const2 = np.array(
+            [_wmean(psf_cat_list[i].g2, psf_cat_list[i].w) for i in range(num_of_corr)]
+        )
 
     # measure the galaxy-PSF cross correlations
     if args.simulations:
@@ -421,8 +421,8 @@ def main():
             if const:
                 full_cov = np.zeros((num_of_corr*nbins + 2, num_of_corr*nbins + 2))
                 full_cov[:num_of_corr*nbins, :num_of_corr*nbins] = gp_joint_cov
-                full_cov[num_of_corr*nbins, num_of_corr*nbins] = e_gal_1_var
-                full_cov[num_of_corr*nbins + 1, num_of_corr*nbins + 1] = e_gal_2_var
+                full_cov[num_of_corr*nbins, num_of_corr*nbins] = mean_shear[2]
+                full_cov[num_of_corr*nbins + 1, num_of_corr*nbins + 1] = mean_shear[3]
                 np.savetxt(os.path.join(outpath, cov_file), full_cov)
             else:
                 np.savetxt(os.path.join(outpath, cov_file), gp_joint_cov)
