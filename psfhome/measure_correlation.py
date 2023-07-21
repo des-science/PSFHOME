@@ -11,15 +11,12 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Measure correlation functions of galaxy and PSF.')
     parser.add_argument('--theta_min',
                         default=1.0, type=float,
-                        nargs='+',
                         help='minimum separation')
     parser.add_argument('--theta_max',
                         default=200, type=float,
-                        nargs='+',
                         help='maximum separation')
     parser.add_argument('--nbins',
                         default=32, type=float,
-                        nargs='+',
                         help='number of bins to use')
     parser.add_argument('--gal_shape_file',
                         default='/global/cfs/cdirs/des/y6-shear-catalogs/Y6A2_METADETECT_V5b/metadetect_desdmv5a_cutsv5_patchesv5b.h5',
@@ -53,7 +50,6 @@ def parse_args():
                         action='store_const', const=True, help='whether or not to save gp covariance')
     parser.add_argument('--num_corr',
                         default=4, type=int,
-                        nargs='+',
                         help='number of correlations to compute')
     parser.add_argument('--parallel', default=False,
                         action='store_const', const=True, help='parallelize the process')
@@ -62,24 +58,80 @@ def parse_args():
     parser.add_argument('--const', default=False, 
                         action='store_const', const=True, help='whether or not to model constant')
     # Which columns in psf catalogue to use
-    parser.add_argument('--p1', default='G1_MODEL')
-    parser.add_argument('--p2', default='G2_MODEL')
-    parser.add_argument('--q1', default='DELTA_G1')
-    parser.add_argument('--q2', default='DELTA_G2')
-    parser.add_argument('--p41', default='G41_MODEL')
-    parser.add_argument('--p42', default='G42_MODEL')
-    parser.add_argument('--q41', default='DELTA_G41')
-    parser.add_argument('--q42', default='DELTA_G42')
+    parser.add_argument('--p1', default='G1_MODEL_WMEANSUB')
+    parser.add_argument('--p2', default='G2_MODEL_WMEANSUB')
+    parser.add_argument('--q1', default='DELTA_G1_WMEANSUB')
+    parser.add_argument('--q2', default='DELTA_G2_WMEANSUB')
+    parser.add_argument('--p41', default='G41_MODEL_WMEANSUB')
+    parser.add_argument('--p42', default='G42_MODEL_WMEANSUB')
+    parser.add_argument('--q41', default='DELTA_G41_WMEANSUB')
+    parser.add_argument('--q42', default='DELTA_G42_WMEANSUB')
+    parser.add_argument('--w1', default='G1_X_DELTAT_WMEANSUB')
+    parser.add_argument('--w2', default='G2_X_DELTAT_WMEANSUB')
 
     args = parser.parse_args()
+    print(parser.print_help())
 
     return args
 
 
 def read_mdet_h5(datafile, keys, response=False, subtract_mean_shear=False):
 
-    def _get_shear_weights(dat):
-        return 1/(0.17**2 + 0.5*(np.array(dat['gauss_g_cov_1_1']) + np.array(dat['gauss_g_cov_2_2'])))
+    def assign_loggrid(x, y, xmin, xmax, xsteps, ymin, ymax, ysteps):
+        """
+        Computes indices of 2D grids. Only used when we use shear weight that is binned by S/N and size ratio. 
+        """
+        from math import log10
+        # return x and y indices of data (x,y) on a log-spaced grid that runs from [xy]min to [xy]max in [xy]steps
+
+        logstepx = log10(xmax/xmin)/xsteps
+        logstepy = log10(ymax/ymin)/ysteps
+
+        indexx = (np.log10(x/xmin)/logstepx).astype(int)
+        indexy = (np.log10(y/ymin)/logstepy).astype(int)
+
+        indexx = np.maximum(indexx,0)
+        indexx = np.minimum(indexx, xsteps-1)
+        indexy = np.maximum(indexy,0)
+        indexy = np.minimum(indexy, ysteps-1)
+
+        return indexx,indexy
+
+    def _find_shear_weight(d, wgt_dict, snmin, snmax, sizemin, sizemax, steps, mdet_mom):
+
+        """
+        Assigns shear weights to the objects based on the grids. 
+        """
+        
+        if wgt_dict is None:
+            weights = np.ones(len(d))
+            return weights
+
+        shear_wgt = wgt_dict['weight']
+        smoothing = True
+        if smoothing:
+            from scipy.ndimage import gaussian_filter
+            smooth_response = gaussian_filter(wgt_dict['response'], sigma=2.0)
+            shear_wgt = (smooth_response/wgt_dict['meanes'])**2
+        indexx, indexy = assign_loggrid(d[mdet_mom+'_s2n'], d[mdet_mom+'_T_ratio'], snmin, snmax, steps, sizemin, sizemax, steps)
+        weights = np.array([shear_wgt[x, y] for x, y in zip(indexx, indexy)])
+        
+        return weights
+
+    def _get_shear_weights(dat, shape_err=True):
+        if shape_err:
+            return 1/(0.17**2 + 0.5*(np.array(dat['gauss_g_cov_1_1']) + np.array(dat['gauss_g_cov_2_2'])))
+        else:
+            with open(os.path.join('/pscratch/sd/m/myamamot/des-y6-analysis/y6_measurement/v5b/inverse_variance_weight_v5b_s2n_10-1000_Tratio_0.5-5.pickle'), 'rb') as handle:
+                wgt_dict = pickle.load(handle)
+                snmin = wgt_dict['xedges'][0]
+                snmax = wgt_dict['xedges'][-1]
+                sizemin = wgt_dict['yedges'][0]
+                sizemax = wgt_dict['yedges'][-1]
+                steps = len(wgt_dict['xedges'])-1
+            shear_wgt = _find_shear_weight(dat, wgt_dict, snmin, snmax, sizemin, sizemax, steps, 'gauss')
+            return shear_wgt
+
     def _wmean(q,w):
         return np.sum(q*w)/np.sum(w)
     
@@ -171,7 +223,7 @@ def run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers,
 
         with open('/pscratch/sd/m/myamamot/sample_variance/v5_catalog/seed__fid_'+str(seed)+'.pkl', 'rb') as f:
             d_sim = pickle.load(f)['sources'][0]
-        cat2 = treecorr.Catalog(ra=d_sim['ra'], dec=d_sim['dec'], ra_units='deg', dec_units='deg', g1=d_sim['e1'], g2=d_sim['e2'], patch_centers=patch_centers)
+        cat2 = treecorr.Catalog(ra=d_sim['ra'], dec=d_sim['dec'], ra_units='deg', dec_units='deg', g1=d_sim['e1']-np.average(d_sim['e1'], weights=d_sim['w']), g2=d_sim['e2']-np.average(d_sim['e2'], weights=d_sim['w']), patch_centers=patch_centers)
 
         e_gal_1_mean = np.mean(np.array(cat2.g1))
         e_gal_2_mean = np.mean(np.array(cat2.g2))
@@ -256,6 +308,8 @@ def main():
     p2 = args.p2
     q1 = args.q1 
     q2 = args.q2
+    w1 = args.w1
+    w2 = args.w2
     p41 = args.p41 
     p42 = args.p42
     q41 = args.q41 
@@ -272,7 +326,7 @@ def main():
     cov_file = args.cov_file
     full_cov_file = "gp_full_covariance_psf.txt"
     outpath = args.outpath
-    const = args.const
+    sub_const = args.const
 
     if args.parallel:
         from mpi4py import MPI
@@ -283,9 +337,6 @@ def main():
         comm = None
         rank = 0
     print(rank)
-
-    # read some variables for later use in this function
-    num_of_corr = num_of_corr
 
     def _wmean(q,w):
         return np.sum(q*w)/np.sum(w)
@@ -331,52 +382,66 @@ def main():
 
     # PSF catalog
     cat = fio.read(psf_file)
+    cat = cat[cat['BAND'] == 'i']
     cat_epsf = treecorr.Catalog(
         ra=cat['RA'],
         dec=cat['DEC'],
-        g1=cat[p1] - np.average(cat[p1], weights=cat['STAR_GAL_GI_WEIGHT']),
-        g2=cat[p2] - np.average(cat[p2], weights=cat['STAR_GAL_GI_WEIGHT']),
+        g1=cat[p1],
+        g2=cat[p2],
         ra_units="deg",
         dec_units="deg",
         patch_centers=patch_centers,
-        w=cat['STAR_GAL_GI_WEIGHT']
+        w=cat['STARGAL_COLOR_WEIGHT']
     )
     cat_depsf = treecorr.Catalog(
         ra=cat['RA'],
         dec=cat['DEC'],
-        g1=cat[q1] - np.average(cat[q1], weights=cat['STAR_GAL_GI_WEIGHT']),
-        g2=cat[q2] - np.average(cat[q2], weights=cat['STAR_GAL_GI_WEIGHT']),
+        g1=cat[q1],
+        g2=cat[q2],
         ra_units="deg",
         dec_units="deg",
         patch_centers=patch_centers,
-        w=cat['STAR_GAL_GI_WEIGHT']
+        w=cat['STARGAL_COLOR_WEIGHT']
     )
     cat_Mpsf = treecorr.Catalog(
         ra=cat['RA'],
         dec=cat['DEC'],
-        g1=cat[p41] - np.average(cat[p41], weights=cat['STAR_GAL_GI_WEIGHT']),
-        g2=cat[p42] - np.average(cat[p42], weights=cat['STAR_GAL_GI_WEIGHT']),
+        g1=cat[p41],
+        g2=cat[p42],
         ra_units="deg",
         dec_units="deg",
         patch_centers=patch_centers,
-        w=cat['STAR_GAL_GI_WEIGHT']
+        w=cat['STARGAL_COLOR_WEIGHT']
     )
     cat_dMpsf = treecorr.Catalog(
         ra=cat['RA'],
         dec=cat['DEC'],
-        g1=cat[q41] - np.average(cat[q41], weights=cat['STAR_GAL_GI_WEIGHT']),
-        g2=cat[q42] - np.average(cat[q42], weights=cat['STAR_GAL_GI_WEIGHT']),
+        g1=cat[q41],
+        g2=cat[q42],
         ra_units="deg",
         dec_units="deg",
         patch_centers=patch_centers,
-        w=cat['STAR_GAL_GI_WEIGHT']
+        w=cat['STARGAL_COLOR_WEIGHT']
+    )
+    cat_eTpsf = treecorr.Catalog(
+        ra=cat['RA'],
+        dec=cat['DEC'],
+        g1=cat[w1],
+        g2=cat[w2],
+        ra_units="deg",
+        dec_units="deg",
+        patch_centers=patch_centers,
+        w=cat['STARGAL_COLOR_WEIGHT']
     )
 
     gal_cat = cat_egal
     # define the PSF moments list, [second leakage, second modeling, fourth leakage, fourth modeling]
-    psf_cat_list = [cat_epsf, cat_depsf, cat_Mpsf, cat_dMpsf]
+    if num_of_corr == 3:
+        psf_cat_list = [cat_epsf, cat_depsf, cat_eTpsf]
+    elif num_of_corr == 5:
+        psf_cat_list = [cat_epsf, cat_depsf, cat_Mpsf, cat_dMpsf, cat_eTpsf]
 
-    if const:
+    if sub_const:
         egal_mean = np.zeros(2)
         psf_const1 = np.zeros(num_of_corr)
         psf_const2 = np.zeros(num_of_corr)
@@ -394,6 +459,7 @@ def main():
 
     # measure the galaxy-PSF cross correlations
     if args.simulations:
+        ## TO-DO: modify run_mocks to accomodate eta term. 
         run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers, theta_min, theta_max, var_method, outpath)
     else:
         gp_corr_xip = np.zeros(shape=(num_of_corr, nbins))
@@ -418,14 +484,14 @@ def main():
             slice_, :
         ][:, slice_]
         if save_gp_cov:
-            if const:
+            if sub_const:
+                np.savetxt(os.path.join(outpath, cov_file), gp_joint_cov)
+            else:
                 full_cov = np.zeros((num_of_corr*nbins + 2, num_of_corr*nbins + 2))
                 full_cov[:num_of_corr*nbins, :num_of_corr*nbins] = gp_joint_cov
                 full_cov[num_of_corr*nbins, num_of_corr*nbins] = mean_shear[2]
                 full_cov[num_of_corr*nbins + 1, num_of_corr*nbins + 1] = mean_shear[3]
                 np.savetxt(os.path.join(outpath, cov_file), full_cov)
-            else:
-                np.savetxt(os.path.join(outpath, cov_file), gp_joint_cov)
 
 
         # measure the PSF-PSF correlations
