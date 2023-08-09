@@ -16,7 +16,7 @@ def parse_args():
                         default=200, type=float,
                         help='maximum separation')
     parser.add_argument('--nbins',
-                        default=32, type=float,
+                        default=32, type=int,
                         help='number of bins to use')
     parser.add_argument('--gal_shape_file',
                         default='/global/cfs/cdirs/des/y6-shear-catalogs/Y6A2_METADETECT_V5b/metadetect_desdmv5a_cutsv5_patchesv5b.h5',
@@ -68,6 +68,12 @@ def parse_args():
     parser.add_argument('--q42', default='DELTA_G42_WMEANSUB')
     parser.add_argument('--w1', default='G1_X_DELTAT_WMEANSUB')
     parser.add_argument('--w2', default='G2_X_DELTAT_WMEANSUB')
+    parser.add_argument('--w41', default='G41_X_DELTAT4_WMEANSUB')
+    parser.add_argument('--w42', default='G42_X_DELTAT4_WMEANSUB')
+    parser.add_argument('--s1', default='G1_X_DELTAT4_WMEANSUB')
+    parser.add_argument('--s2', default='G2_X_DELTAT4_WMEANSUB')
+    parser.add_argument('--t1', default='G41_X_DELTAT_WMEANSUB')
+    parser.add_argument('--t2', default='G42_X_DELTAT_WMEANSUB')
 
     args = parser.parse_args()
     print(parser.print_help())
@@ -120,7 +126,7 @@ def read_mdet_h5(datafile, keys, response=False, subtract_mean_shear=False):
 
     def _get_shear_weights(dat, shape_err=True):
         if shape_err:
-            return 1/(0.17**2 + 0.5*(np.array(dat['gauss_g_cov_1_1']) + np.array(dat['gauss_g_cov_2_2'])))
+            return 1/(0.22**2 + 0.5*(np.array(dat['gauss_g_cov_1_1']) + np.array(dat['gauss_g_cov_2_2'])))
         else:
             with open(os.path.join('/pscratch/sd/m/myamamot/des-y6-analysis/y6_measurement/v5b/inverse_variance_weight_v5b_s2n_10-1000_Tratio_0.5-5.pickle'), 'rb') as handle:
                 wgt_dict = pickle.load(handle)
@@ -217,7 +223,7 @@ def run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers,
 
     import pickle
     print('running correlations for sims...')
-    for seed in range(1,201):
+    for seed in range(51,101):
         if seed % size != rank:
             continue
 
@@ -314,6 +320,12 @@ def main():
     p42 = args.p42
     q41 = args.q41 
     q42 = args.q42
+    w41 = args.w41 
+    w42 = args.w42
+    s1 = args.s1 
+    s2 = args.s2
+    t1 = args.t1
+    t2 = args.t2
 
     theta_min = args.theta_min
     theta_max = args.theta_max
@@ -382,7 +394,6 @@ def main():
 
     # PSF catalog
     cat = fio.read(psf_file)
-    cat = cat[cat['BAND'] == 'i']
     cat_epsf = treecorr.Catalog(
         ra=cat['RA'],
         dec=cat['DEC'],
@@ -433,6 +444,36 @@ def main():
         patch_centers=patch_centers,
         w=cat['STARGAL_COLOR_WEIGHT']
     )
+    if num_of_corr >= 6:
+        cat_e4Tpsf4 = treecorr.Catalog(
+        ra=cat['RA'],
+        dec=cat['DEC'],
+        g1=cat[w41],
+        g2=cat[w42],
+        ra_units="deg",
+        dec_units="deg",
+        patch_centers=patch_centers,
+        w=cat['STARGAL_COLOR_WEIGHT'])
+
+        cat_eTpsf4 = treecorr.Catalog(
+        ra=cat['RA'],
+        dec=cat['DEC'],
+        g1=cat[s1],
+        g2=cat[s2],
+        ra_units="deg",
+        dec_units="deg",
+        patch_centers=patch_centers,
+        w=cat['STARGAL_COLOR_WEIGHT'])
+
+        cat_e4Tpsf = treecorr.Catalog(
+        ra=cat['RA'],
+        dec=cat['DEC'],
+        g1=cat[t1],
+        g2=cat[t2],
+        ra_units="deg",
+        dec_units="deg",
+        patch_centers=patch_centers,
+        w=cat['STARGAL_COLOR_WEIGHT'])
 
     gal_cat = cat_egal
     # define the PSF moments list, [second leakage, second modeling, fourth leakage, fourth modeling]
@@ -440,6 +481,10 @@ def main():
         psf_cat_list = [cat_epsf, cat_depsf, cat_eTpsf]
     elif num_of_corr == 5:
         psf_cat_list = [cat_epsf, cat_depsf, cat_Mpsf, cat_dMpsf, cat_eTpsf]
+    elif num_of_corr == 6:
+        psf_cat_list = [cat_epsf, cat_depsf, cat_Mpsf, cat_dMpsf, cat_eTpsf, cat_e4Tpsf]
+    elif num_of_corr > 6:
+        psf_cat_list = [cat_epsf, cat_depsf, cat_Mpsf, cat_dMpsf, cat_eTpsf, cat_e4Tpsf4, cat_eTpsf4, cat_e4Tpsf]
 
     if sub_const:
         egal_mean = np.zeros(2)
