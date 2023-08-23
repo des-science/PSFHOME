@@ -223,11 +223,11 @@ def run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers,
 
     import pickle
     print('running correlations for sims...')
-    for seed in range(51,101):
+    for seed in range(101):
         if seed % size != rank:
             continue
 
-        with open('/pscratch/sd/m/myamamot/sample_variance/v5_catalog/seed__fid_'+str(seed)+'.pkl', 'rb') as f:
+        with open('/pscratch/sd/m/myamamot/sample_variance/v5_catalog/seed__fid_cosmogrid_'+str(seed)+'.pkl', 'rb') as f:
             d_sim = pickle.load(f)['sources'][0]
         cat2 = treecorr.Catalog(ra=d_sim['ra'], dec=d_sim['dec'], ra_units='deg', dec_units='deg', g1=d_sim['e1']-np.average(d_sim['e1'], weights=d_sim['w']), g2=d_sim['e2']-np.average(d_sim['e2'], weights=d_sim['w']), patch_centers=patch_centers)
 
@@ -394,6 +394,7 @@ def main():
 
     # PSF catalog
     cat = fio.read(psf_file)
+    w_star = cat['STARGAL_COLOR_WEIGHT_W_OUTLIERS']
     cat_epsf = treecorr.Catalog(
         ra=cat['RA'],
         dec=cat['DEC'],
@@ -402,7 +403,7 @@ def main():
         ra_units="deg",
         dec_units="deg",
         patch_centers=patch_centers,
-        w=cat['STARGAL_COLOR_WEIGHT']
+        w=w_star
     )
     cat_depsf = treecorr.Catalog(
         ra=cat['RA'],
@@ -412,7 +413,7 @@ def main():
         ra_units="deg",
         dec_units="deg",
         patch_centers=patch_centers,
-        w=cat['STARGAL_COLOR_WEIGHT']
+        w=w_star
     )
     cat_Mpsf = treecorr.Catalog(
         ra=cat['RA'],
@@ -422,7 +423,7 @@ def main():
         ra_units="deg",
         dec_units="deg",
         patch_centers=patch_centers,
-        w=cat['STARGAL_COLOR_WEIGHT']
+        w=w_star
     )
     cat_dMpsf = treecorr.Catalog(
         ra=cat['RA'],
@@ -432,7 +433,7 @@ def main():
         ra_units="deg",
         dec_units="deg",
         patch_centers=patch_centers,
-        w=cat['STARGAL_COLOR_WEIGHT']
+        w=w_star
     )
     cat_eTpsf = treecorr.Catalog(
         ra=cat['RA'],
@@ -442,7 +443,7 @@ def main():
         ra_units="deg",
         dec_units="deg",
         patch_centers=patch_centers,
-        w=cat['STARGAL_COLOR_WEIGHT']
+        w=w_star
     )
     if num_of_corr >= 6:
         cat_e4Tpsf4 = treecorr.Catalog(
@@ -453,7 +454,7 @@ def main():
         ra_units="deg",
         dec_units="deg",
         patch_centers=patch_centers,
-        w=cat['STARGAL_COLOR_WEIGHT'])
+        w=w_star)
 
         cat_eTpsf4 = treecorr.Catalog(
         ra=cat['RA'],
@@ -463,7 +464,7 @@ def main():
         ra_units="deg",
         dec_units="deg",
         patch_centers=patch_centers,
-        w=cat['STARGAL_COLOR_WEIGHT'])
+        w=w_star)
 
         cat_e4Tpsf = treecorr.Catalog(
         ra=cat['RA'],
@@ -473,7 +474,7 @@ def main():
         ra_units="deg",
         dec_units="deg",
         patch_centers=patch_centers,
-        w=cat['STARGAL_COLOR_WEIGHT'])
+        w=w_star)
 
     gal_cat = cat_egal
     # define the PSF moments list, [second leakage, second modeling, fourth leakage, fourth modeling]
