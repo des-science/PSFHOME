@@ -26,6 +26,14 @@ def parse_args():
                         default='/global/cfs/cdirs/des/schutt20/catalogs/y6a2_piff_v3_HOMs_v1_rhotau_input_riz.fits',
                         type=str,
                         help='PSF catalogue')
+    parser.add_argument('--weight_file', 
+                        default='/pscratch/sd/m/myamamot/des-y6-analysis/y6_measurement/v5b/inverse_variance_weight_v5b_s2n_10-1000_Tratio_0.5-5.pickle',
+                        type=str,
+                        help='Weight file')
+    parser.add_argument('--sim_path', 
+                        default='/pscratch/sd/m/myamamot/sample_variance/v5_catalog_cosmogrid/',
+                        type=str,
+                        help='A path to mock catalogs')
     parser.add_argument('--patch_centers',
                         default='/global/cfs/cdirs/des/y6-shear-catalogs/patches-centers-altrem-npatch200-seed8888.fits',
                         type=str,
@@ -84,7 +92,7 @@ def parse_args():
     return args
 
 
-def read_mdet_h5(datafile, keys, response=False, subtract_mean_shear=False):
+def read_mdet_h5(datafile, gal_weight_file, keys, response=False, subtract_mean_shear=False):
 
     def assign_loggrid(x, y, xmin, xmax, xsteps, ymin, ymax, ysteps):
         """
@@ -127,11 +135,11 @@ def read_mdet_h5(datafile, keys, response=False, subtract_mean_shear=False):
         
         return weights
 
-    def _get_shear_weights(dat, shape_err=True):
+    def _get_shear_weights(dat, gal_weight_file, shape_err=False):
         if shape_err:
             return 1/(0.22**2 + 0.5*(np.array(dat['gauss_g_cov_1_1']) + np.array(dat['gauss_g_cov_2_2'])))
         else:
-            with open(os.path.join('/pscratch/sd/m/myamamot/des-y6-analysis/y6_measurement/v5b/inverse_variance_weight_v5b_s2n_10-1000_Tratio_0.5-5.pickle'), 'rb') as handle:
+            with open(gal_weight_file, 'rb') as handle:
                 wgt_dict = pickle.load(handle)
                 snmin = wgt_dict['xedges'][0]
                 snmax = wgt_dict['xedges'][-1]
@@ -154,7 +162,7 @@ def read_mdet_h5(datafile, keys, response=False, subtract_mean_shear=False):
     data = np.recarray(shape=(nrows,), formats=formats, names=keys)
     for key in keys:  
         if key == 'w':
-            data['w'] = _get_shear_weights(d)
+            data['w'] = _get_shear_weights(d, gal_weight_file)
         elif key in ('g1', 'g2'):
             data[key] = np.array(d['gauss_'+key[0]+'_'+key[1]])
         else:
@@ -168,12 +176,12 @@ def read_mdet_h5(datafile, keys, response=False, subtract_mean_shear=False):
         d_2m = f.get('/mdet/2m')
         d_1m = f.get('/mdet/1m')
         # compute response with weights
-        g1p = _wmean(np.array(d_1p["gauss_g_1"]), _get_shear_weights(d_1p))                                     
-        g1m = _wmean(np.array(d_1m["gauss_g_1"]), _get_shear_weights(d_1m))
+        g1p = _wmean(np.array(d_1p["gauss_g_1"]), _get_shear_weights(d_1p, gal_weight_file))                                     
+        g1m = _wmean(np.array(d_1m["gauss_g_1"]), _get_shear_weights(d_1m, gal_weight_file))
         R11 = (g1p - g1m) / 0.02
 
-        g2p = _wmean(np.array(d_2p["gauss_g_2"]), _get_shear_weights(d_2p))
-        g2m = _wmean(np.array(d_2m["gauss_g_2"]), _get_shear_weights(d_2m))
+        g2p = _wmean(np.array(d_2p["gauss_g_2"]), _get_shear_weights(d_2p, gal_weight_file))
+        g2m = _wmean(np.array(d_2m["gauss_g_2"]), _get_shear_weights(d_2m, gal_weight_file))
         R22 = (g2p - g2m) / 0.02
 
         R = (R11 + R22)/2.
@@ -225,7 +233,7 @@ def get_corr(cat1, cat2, var_method, min_sep=0.5, max_sep=250, nbins=32, ximmode
             return gg_ij.meanlogr, gg_ij.xip, gg_ij.cov[:nbins, :nbins], gg_ij
     
 
-def run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers, theta_min, theta_max, var_method, outpath, ximmode=False, xipxim=False):
+def run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers, theta_min, theta_max, var_method, outpath, sim_path, ximmode=False, xipxim=False):
 
     import pickle
     print('running correlations for sims...')
@@ -236,7 +244,7 @@ def run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers,
         if os.path.exists(os.path.join(outpath_sims, "full_correlation_psf_"+str(seed+1)+".pkl")):
             continue
 
-        with open('/pscratch/sd/m/myamamot/sample_variance/v5_catalog_cosmogrid/seed__fid_cosmogrid_'+str(seed+1)+'.pkl', 'rb') as f:
+        with open(os.path.join(sim_path, 'seed__fid_cosmogrid_'+str(seed+1)+'.pkl'), 'rb') as f:
             d_sim = pickle.load(f)['sources'][0]
         cat2 = treecorr.Catalog(ra=d_sim['ra'], dec=d_sim['dec'], ra_units='deg', dec_units='deg', g1=d_sim['e1']-np.average(d_sim['e1'], weights=d_sim['w']), g2=d_sim['e2']-np.average(d_sim['e2'], weights=d_sim['w']), patch_centers=patch_centers)
 
@@ -344,6 +352,8 @@ def main():
 
     psf_file = args.psf_file
     gal_shape_file = args.gal_shape_file
+    gal_weight_file = args.weight_file
+    sim_path = args.sim_path
     star_weight_file = None
     patch_centers = args.patch_centers
     num_of_corr = args.num_corr
@@ -396,7 +406,7 @@ def main():
     # load galaxy shape and PSF moments tables
     if hdf5:
         keys = ['ra', 'dec', 'g1', 'g2', 'w']
-        gal_data, mean_shear = read_mdet_h5(gal_shape_file, keys, response=True, subtract_mean_shear=subtract_mean_shear)
+        gal_data, mean_shear = read_mdet_h5(gal_shape_file, gal_weight_file, keys, response=True, subtract_mean_shear=subtract_mean_shear)
         cat_egal = treecorr.Catalog(ra=gal_data['ra'], 
                                 dec=gal_data['dec'], 
                                 ra_units='deg', 
@@ -545,7 +555,7 @@ def main():
 
     # measure the galaxy-PSF cross correlations
     if args.simulations:
-        run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers, theta_min, theta_max, var_method, outpath, ximmode=ximmode, xipxim=xipxim)
+        run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers, theta_min, theta_max, var_method, outpath, sim_path, ximmode=ximmode, xipxim=xipxim)
     else:
         if xipxim:
             gp_corr_xip = np.zeros(shape=(num_of_corr, nbins))
