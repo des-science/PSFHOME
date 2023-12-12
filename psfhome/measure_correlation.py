@@ -57,26 +57,27 @@ def parse_args():
                         action='store_const', const=True, help='run on mocks')
     parser.add_argument('--const', default=False, 
                         action='store_const', const=True, help='whether or not to model constant')
+    parser.add_argument('--xim', default=False, 
+                        action='store_const', const=True, help='whether or not to run xim')
     # Which columns in psf catalogue to use
-    parser.add_argument('--p1', default='G1_MODEL_WMEANSUB')
-    parser.add_argument('--p2', default='G2_MODEL_WMEANSUB')
-    parser.add_argument('--q1', default='DELTA_G1_WMEANSUB')
-    parser.add_argument('--q2', default='DELTA_G2_WMEANSUB')
-    parser.add_argument('--p41', default='G41_MODEL_WMEANSUB')
-    parser.add_argument('--p42', default='G42_MODEL_WMEANSUB')
-    parser.add_argument('--q41', default='DELTA_G41_WMEANSUB')
-    parser.add_argument('--q42', default='DELTA_G42_WMEANSUB')
-    parser.add_argument('--w1', default='G1_X_DELTAT_WMEANSUB')
-    parser.add_argument('--w2', default='G2_X_DELTAT_WMEANSUB')
-    parser.add_argument('--w41', default='G41_X_DELTAT4_WMEANSUB')
-    parser.add_argument('--w42', default='G42_X_DELTAT4_WMEANSUB')
-    parser.add_argument('--s1', default='G1_X_DELTAT4_WMEANSUB')
-    parser.add_argument('--s2', default='G2_X_DELTAT4_WMEANSUB')
-    parser.add_argument('--t1', default='G41_X_DELTAT_WMEANSUB')
-    parser.add_argument('--t2', default='G42_X_DELTAT_WMEANSUB')
+    parser.add_argument('--p1', default='G1_MODEL_WMEANSUB_W_OUT')
+    parser.add_argument('--p2', default='G2_MODEL_WMEANSUB_W_OUT')
+    parser.add_argument('--q1', default='DELTA_G1_WMEANSUB_W_OUT')
+    parser.add_argument('--q2', default='DELTA_G2_WMEANSUB_W_OUT')
+    parser.add_argument('--p41', default='G41_MODEL_WMEANSUB_W_OUT')
+    parser.add_argument('--p42', default='G42_MODEL_WMEANSUB_W_OUT')
+    parser.add_argument('--q41', default='DELTA_G41_WMEANSUB_W_OUT')
+    parser.add_argument('--q42', default='DELTA_G42_WMEANSUB_W_OUT')
+    parser.add_argument('--w1', default='G1_X_DELTAT_WMEANSUB_W_OUT')
+    parser.add_argument('--w2', default='G2_X_DELTAT_WMEANSUB_W_OUT')
+    parser.add_argument('--w41', default='G41_X_DELTAT4_WMEANSUB_W_OUT')
+    parser.add_argument('--w42', default='G42_X_DELTAT4_WMEANSUB_W_OUT')
+    parser.add_argument('--s1', default='G1_X_DELTAT4_WMEANSUB_W_OUT')
+    parser.add_argument('--s2', default='G2_X_DELTAT4_WMEANSUB_W_OUT')
+    parser.add_argument('--t1', default='G41_X_DELTAT_WMEANSUB_W_OUT')
+    parser.add_argument('--t2', default='G42_X_DELTAT_WMEANSUB_W_OUT')
 
     args = parser.parse_args()
-    print(parser.print_help())
 
     return args
 
@@ -223,11 +224,14 @@ def run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers,
 
     import pickle
     print('running correlations for sims...')
-    for seed in range(101):
+    for seed in range(650, 800):
         if seed % size != rank:
             continue
+        outpath_sims = os.path.join(outpath, 'sims')
+        if os.path.exists(os.path.join(outpath_sims, "full_correlation_psf_"+str(seed+1)+".pkl")):
+            continue
 
-        with open('/pscratch/sd/m/myamamot/sample_variance/v5_catalog/seed__fid_cosmogrid_'+str(seed)+'.pkl', 'rb') as f:
+        with open('/pscratch/sd/m/myamamot/sample_variance/v5_catalog_cosmogrid/seed__fid_cosmogrid_'+str(seed+1)+'.pkl', 'rb') as f:
             d_sim = pickle.load(f)['sources'][0]
         cat2 = treecorr.Catalog(ra=d_sim['ra'], dec=d_sim['dec'], ra_units='deg', dec_units='deg', g1=d_sim['e1']-np.average(d_sim['e1'], weights=d_sim['w']), g2=d_sim['e2']-np.average(d_sim['e2'], weights=d_sim['w']), patch_centers=patch_centers)
 
@@ -294,8 +298,7 @@ def run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers,
         pp_corr_cov = pp_corr_cov
         gp_corr = gp_corr_xip
 
-        outpath_sims = os.path.join(outpath, 'sims')
-        with open(os.path.join(outpath_sims, "full_correlation_psf_"+str(seed)+".pkl"), 'wb') as f:
+        with open(os.path.join(outpath_sims, "full_correlation_psf_"+str(seed+1)+".pkl"), 'wb') as f:
             pickle.dump([r, gp_corr, pp_corr,psf_const1, psf_const2, egal_mean], f)
 
 def main():
@@ -339,6 +342,8 @@ def main():
     full_cov_file = "gp_full_covariance_psf.txt"
     outpath = args.outpath
     sub_const = args.const
+
+    ximmode = args.xim
 
     if args.parallel:
         from mpi4py import MPI
@@ -505,22 +510,25 @@ def main():
 
     # measure the galaxy-PSF cross correlations
     if args.simulations:
-        ## TO-DO: modify run_mocks to accomodate eta term. 
-        run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers, theta_min, theta_max, var_method, outpath)
+        run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers, theta_min, theta_max, var_method, outpath) # TO-DO: modify if running xim. 
     else:
         gp_corr_xip = np.zeros(shape=(num_of_corr, nbins))
         gp_corr_cov = np.zeros(shape = (num_of_corr, nbins, nbins))
         gp_corr_list = []
         for i in range(num_of_corr):
             print('running gp correlations...', i)
-            logr, this_xip, this_cov, gp_corr_item = get_corr(gal_cat, psf_cat_list[i], var_method, min_sep=theta_min, max_sep=theta_max, nbins=nbins)
+            logr, this_xip, this_cov, gp_corr_item = get_corr(gal_cat, psf_cat_list[i], var_method, min_sep=theta_min, max_sep=theta_max, nbins=nbins, ximmode=ximmode)
             gp_corr_xip[i] = this_xip
             gp_corr_cov[i] = this_cov
             gp_corr_list.append(gp_corr_item)
 
         slice_ = []
-        for i in range(num_of_corr):
-            slice_.append(np.arange(0, nbins) + i*2*nbins)
+        if ximmode:
+            for i in range(num_of_corr):
+                slice_.append(np.arange(nbins,2*nbins) + 2*i*nbins)
+        else:
+            for i in range(num_of_corr):
+                slice_.append(np.arange(0, nbins) + i*2*nbins)
         slice_ = np.array(slice_).reshape(-1)
 
         gp_joint_cov = treecorr.estimate_multi_cov(gp_corr_list, var_method)
@@ -543,7 +551,6 @@ def main():
         # measure the PSF-PSF correlations
         pp_corr_xip = np.zeros(shape=(num_of_corr, num_of_corr, nbins))
         pp_corr_cov = np.zeros(shape=(num_of_corr, num_of_corr, nbins, nbins))
-
         pp_corr_list = []
 
         for i in range(num_of_corr):
@@ -551,14 +558,18 @@ def main():
                 print('running pp correlations...', i, j)
                 logr, this_xip, this_cov, pp_corr_item = get_corr(
                     psf_cat_list[i], psf_cat_list[j], var_method, 
-                    min_sep=theta_min, max_sep=theta_max, nbins=nbins)
+                    min_sep=theta_min, max_sep=theta_max, nbins=nbins, ximmode=ximmode)
                 pp_corr_cov[i][j] = this_cov
                 pp_corr_xip[i][j] = this_xip
                 pp_corr_list.append(pp_corr_item)
 
         slice_ = []
-        for i in range(num_of_corr**2):
-            slice_.append(np.arange(0, nbins) + i*2*nbins)
+        if ximmode:
+            for i in range(num_of_corr**2):
+                slice_.append(np.arange(nbins, 2*nbins) + i*2*nbins)
+        else:
+            for i in range(num_of_corr**2):
+                slice_.append(np.arange(0, nbins) + i*2*nbins)
         slice_ = np.array(slice_).reshape(-1)
 
         pp_joint_cov = treecorr.estimate_multi_cov(pp_corr_list, var_method)[
@@ -571,7 +582,12 @@ def main():
         pp_corr_cov = pp_corr_cov
         gp_corr = gp_corr_xip
 
-        with open(os.path.join(outpath, "full_correlation_psf.pkl"), 'wb') as f:
+        if ximmode:
+            outf = "full_correlation_psf_xim.pkl"
+        else:
+            outf = "full_correlation_psf_xip.pkl"
+        
+        with open(os.path.join(outpath, outf), 'wb') as f:
             pickle.dump([r, gp_corr, pp_corr,  psf_const1, psf_const2, egal_mean, pp_corr_cov, pp_joint_cov, gp_corr_cov ], f)
 
 if __name__ == "__main__":
