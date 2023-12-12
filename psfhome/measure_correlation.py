@@ -59,6 +59,8 @@ def parse_args():
                         action='store_const', const=True, help='whether or not to model constant')
     parser.add_argument('--xim', default=False, 
                         action='store_const', const=True, help='whether or not to run xim')
+    parser.add_argument('--xipxim', default=False, 
+                        action='store_const', const=True, help='whether or not to save both xip and xim')
     # Which columns in psf catalogue to use
     parser.add_argument('--p1', default='G1_MODEL_WMEANSUB_W_OUT')
     parser.add_argument('--p2', default='G2_MODEL_WMEANSUB_W_OUT')
@@ -193,7 +195,7 @@ def read_mdet_h5(datafile, keys, response=False, subtract_mean_shear=False):
     return data, mean_shear
 
 
-def get_corr(cat1, cat2, var_method, min_sep=0.5, max_sep=250, nbins=32, ximmode=False):
+def get_corr(cat1, cat2, var_method, min_sep=0.5, max_sep=250, nbins=32, ximmode=False, xipxim=False):
 
     """
     Get the correlation functions
@@ -214,17 +216,20 @@ def get_corr(cat1, cat2, var_method, min_sep=0.5, max_sep=250, nbins=32, ximmode
 
     gg_ij.process(cat1, cat2)
 
-    if ximmode == True:
-        return gg_ij.meanlogr, gg_ij.xim, gg_ij.cov[nbins:, nbins:], gg_ij
+    if xipxim:
+        return gg_ij.meanlogr, gg_ij.xip, gg_ij.xim, gg_ij.cov, gg_ij
     else:
-        return gg_ij.meanlogr, gg_ij.xip, gg_ij.cov[:nbins, :nbins], gg_ij
+        if ximmode == True:
+            return gg_ij.meanlogr, gg_ij.xim, gg_ij.cov[nbins:, nbins:], gg_ij
+        else:
+            return gg_ij.meanlogr, gg_ij.xip, gg_ij.cov[:nbins, :nbins], gg_ij
     
 
-def run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers, theta_min, theta_max, var_method, outpath):
+def run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers, theta_min, theta_max, var_method, outpath, ximmode=False, xipxim=False):
 
     import pickle
     print('running correlations for sims...')
-    for seed in range(650, 800):
+    for seed in range(180):
         if seed % size != rank:
             continue
         outpath_sims = os.path.join(outpath, 'sims')
@@ -247,59 +252,88 @@ def run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers,
             [np.average(psf_cat_list[i].g2, weights=psf_cat_list[i].w) for i in range(num_of_corr)]
         )
 
-        gp_corr_xip = np.zeros(shape=(num_of_corr, nbins))
-        gp_corr_cov = np.zeros(shape = (num_of_corr, nbins, nbins))
-        gp_corr_list = []
-        for i in range(num_of_corr):
-            print('running gp correlations...', i)
-            logr, this_xip, this_cov, gp_corr_item = get_corr(cat2, psf_cat_list[i], var_method, min_sep=theta_min, max_sep=theta_max, 
-                                                            nbins=nbins)
-            gp_corr_xip[i] = this_xip
-            gp_corr_cov[i] = this_cov
-            gp_corr_list.append(gp_corr_item)
+        if xipxim:
+            gp_corr_xip = np.zeros(shape=(num_of_corr, nbins))
+            gp_corr_xim = np.zeros(shape=(num_of_corr, nbins))
+            gp_corr_list = []
+            for i in range(num_of_corr):
+                print('running gp correlations...', i)
+                logr, this_xip, this_xim, this_cov, gp_corr_item = get_corr(cat2, psf_cat_list[i], var_method, min_sep=theta_min, max_sep=theta_max, nbins=nbins, xipxim=xipxim)
+                gp_corr_xip[i] = this_xip
+                gp_corr_xim[i] = this_xim
+                gp_corr_list.append(gp_corr_item)
 
-        slice_ = []
-        for i in range(num_of_corr):
-            slice_.append(np.arange(0, nbins) + i*2*nbins)
-        slice_ = np.array(slice_).reshape(-1)
-        # gp_joint_cov = treecorr.estimate_multi_cov(gp_corr_list, var_method)[
-        #     slice_, :
-        # ][:, slice_]
+            # measure the PSF-PSF correlations
+            pp_corr_xip = np.zeros(shape=(num_of_corr, num_of_corr, nbins))
+            pp_corr_xim = np.zeros(shape=(num_of_corr, num_of_corr, nbins))
+            pp_corr_list = []
+            for i in range(num_of_corr):
+                for j in range(num_of_corr):
+                    print('running pp correlations...', i, j)
+                    logr, this_xip, this_xim, this_cov, pp_corr_item = get_corr(
+                        psf_cat_list[i], psf_cat_list[j], var_method, 
+                        min_sep=theta_min, max_sep=theta_max, nbins=nbins, xipxim=xipxim)
+                    pp_corr_xip[i][j] = this_xip
+                    pp_corr_xim[i][j] = this_xim
+                    pp_corr_list.append(pp_corr_item)
+            
+            r = np.exp(logr)
+            with open(os.path.join(outpath, "full_correlation_psf_xipxim.pkl"), 'wb') as f:
+                pickle.dump([r, gp_corr_xip, gp_corr_xim, pp_corr_xip, pp_corr_xim], f)
+        else:
+            gp_corr_xip = np.zeros(shape=(num_of_corr, nbins))
+            gp_corr_cov = np.zeros(shape = (num_of_corr, nbins, nbins))
+            gp_corr_list = []
+            for i in range(num_of_corr):
+                print('running gp correlations...', i)
+                logr, this_xip, this_cov, gp_corr_item = get_corr(cat2, psf_cat_list[i], var_method, min_sep=theta_min, max_sep=theta_max, 
+                                                                nbins=nbins, ximmode=ximmode)
+                gp_corr_xip[i] = this_xip
+                gp_corr_cov[i] = this_cov
+                gp_corr_list.append(gp_corr_item)
+
+            slice_ = []
+            for i in range(num_of_corr):
+                slice_.append(np.arange(0, nbins) + i*2*nbins)
+            slice_ = np.array(slice_).reshape(-1)
+            # gp_joint_cov = treecorr.estimate_multi_cov(gp_corr_list, var_method)[
+            #     slice_, :
+            # ][:, slice_]
 
 
-        # measure the PSF-PSF correlations
-        pp_corr_xip = np.zeros(shape=(num_of_corr, num_of_corr, nbins))
-        pp_corr_cov = np.zeros(shape=(num_of_corr, num_of_corr, nbins, nbins))
+            # measure the PSF-PSF correlations
+            pp_corr_xip = np.zeros(shape=(num_of_corr, num_of_corr, nbins))
+            pp_corr_cov = np.zeros(shape=(num_of_corr, num_of_corr, nbins, nbins))
 
-        pp_corr_list = []
+            pp_corr_list = []
 
-        for i in range(num_of_corr):
-            for j in range(num_of_corr):
-                print('running pp correlations...', i, j)
-                logr, this_xip, this_cov, pp_corr_item = get_corr(
-                    psf_cat_list[i], psf_cat_list[j], var_method, 
-                    min_sep=theta_min, max_sep=theta_max, nbins=nbins)
-                pp_corr_cov[i][j] = this_cov
-                pp_corr_xip[i][j] = this_xip
-                pp_corr_list.append(pp_corr_item)
+            for i in range(num_of_corr):
+                for j in range(num_of_corr):
+                    print('running pp correlations...', i, j)
+                    logr, this_xip, this_cov, pp_corr_item = get_corr(
+                        psf_cat_list[i], psf_cat_list[j], var_method, 
+                        min_sep=theta_min, max_sep=theta_max, nbins=nbins, ximmode=ximmode)
+                    pp_corr_cov[i][j] = this_cov
+                    pp_corr_xip[i][j] = this_xip
+                    pp_corr_list.append(pp_corr_item)
 
-        slice_ = []
-        for i in range(num_of_corr**2):
-            slice_.append(np.arange(0, nbins) + i*2*nbins)
-        slice_ = np.array(slice_).reshape(-1)
+            slice_ = []
+            for i in range(num_of_corr**2):
+                slice_.append(np.arange(0, nbins) + i*2*nbins)
+            slice_ = np.array(slice_).reshape(-1)
 
-        # pp_joint_cov = treecorr.estimate_multi_cov(pp_corr_list, var_method)[
-        #     slice_, :
-        # ][:, slice_]
+            # pp_joint_cov = treecorr.estimate_multi_cov(pp_corr_list, var_method)[
+            #     slice_, :
+            # ][:, slice_]
 
-        r = np.exp(logr)
+            r = np.exp(logr)
 
-        pp_corr = pp_corr_xip
-        pp_corr_cov = pp_corr_cov
-        gp_corr = gp_corr_xip
+            pp_corr = pp_corr_xip
+            pp_corr_cov = pp_corr_cov
+            gp_corr = gp_corr_xip
 
-        with open(os.path.join(outpath_sims, "full_correlation_psf_"+str(seed+1)+".pkl"), 'wb') as f:
-            pickle.dump([r, gp_corr, pp_corr,psf_const1, psf_const2, egal_mean], f)
+            with open(os.path.join(outpath_sims, "full_correlation_psf_"+str(seed+1)+".pkl"), 'wb') as f:
+                pickle.dump([r, gp_corr, pp_corr,psf_const1, psf_const2, egal_mean], f)
 
 def main():
 
@@ -344,6 +378,7 @@ def main():
     sub_const = args.const
 
     ximmode = args.xim
+    xipxim = args.xipxim
 
     if args.parallel:
         from mpi4py import MPI
@@ -510,85 +545,118 @@ def main():
 
     # measure the galaxy-PSF cross correlations
     if args.simulations:
-        run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers, theta_min, theta_max, var_method, outpath) # TO-DO: modify if running xim. 
+        run_mocks(comm, rank, size, num_of_corr, nbins, psf_cat_list, patch_centers, theta_min, theta_max, var_method, outpath, ximmode=ximmode, xipxim=xipxim)
     else:
-        gp_corr_xip = np.zeros(shape=(num_of_corr, nbins))
-        gp_corr_cov = np.zeros(shape = (num_of_corr, nbins, nbins))
-        gp_corr_list = []
-        for i in range(num_of_corr):
-            print('running gp correlations...', i)
-            logr, this_xip, this_cov, gp_corr_item = get_corr(gal_cat, psf_cat_list[i], var_method, min_sep=theta_min, max_sep=theta_max, nbins=nbins, ximmode=ximmode)
-            gp_corr_xip[i] = this_xip
-            gp_corr_cov[i] = this_cov
-            gp_corr_list.append(gp_corr_item)
-
-        slice_ = []
-        if ximmode:
+        if xipxim:
+            gp_corr_xip = np.zeros(shape=(num_of_corr, nbins))
+            gp_corr_xim = np.zeros(shape=(num_of_corr, nbins))
+            gp_corr_list = []
             for i in range(num_of_corr):
-                slice_.append(np.arange(nbins,2*nbins) + 2*i*nbins)
+                print('running gp correlations...', i)
+                logr, this_xip, this_xim, this_cov, gp_corr_item = get_corr(gal_cat, psf_cat_list[i], var_method, min_sep=theta_min, max_sep=theta_max, nbins=nbins, xipxim=xipxim)
+                gp_corr_xip[i] = this_xip
+                gp_corr_xim[i] = this_xim
+                gp_corr_list.append(gp_corr_item)
+
+            # gp_joint_cov = treecorr.estimate_multi_cov(gp_corr_list, var_method)
+            # if save_gp_cov:
+            #     np.savetxt(os.path.join(outpath, full_cov_file), gp_joint_cov)
+
+            # measure the PSF-PSF correlations
+            pp_corr_xip = np.zeros(shape=(num_of_corr, num_of_corr, nbins))
+            pp_corr_xim = np.zeros(shape=(num_of_corr, num_of_corr, nbins))
+            pp_corr_list = []
+            for i in range(num_of_corr):
+                for j in range(num_of_corr):
+                    print('running pp correlations...', i, j)
+                    logr, this_xip, this_xim, this_cov, pp_corr_item = get_corr(
+                        psf_cat_list[i], psf_cat_list[j], var_method, 
+                        min_sep=theta_min, max_sep=theta_max, nbins=nbins, xipxim=xipxim)
+                    pp_corr_xip[i][j] = this_xip
+                    pp_corr_xim[i][j] = this_xim
+                    pp_corr_list.append(pp_corr_item)
+            
+            # pp_joint_cov = treecorr.estimate_multi_cov(pp_corr_list, var_method)
+            r = np.exp(logr)
+            with open(os.path.join(outpath, "full_correlation_psf_xipxim.pkl"), 'wb') as f:
+                pickle.dump([r, gp_corr_xip, gp_corr_xim, pp_corr_xip, pp_corr_xim], f)
         else:
+            gp_corr_xip = np.zeros(shape=(num_of_corr, nbins))
+            gp_corr_cov = np.zeros(shape = (num_of_corr, nbins, nbins))
+            gp_corr_list = []
             for i in range(num_of_corr):
-                slice_.append(np.arange(0, nbins) + i*2*nbins)
-        slice_ = np.array(slice_).reshape(-1)
+                print('running gp correlations...', i)
+                logr, this_xip, this_cov, gp_corr_item = get_corr(gal_cat, psf_cat_list[i], var_method, min_sep=theta_min, max_sep=theta_max, nbins=nbins, ximmode=ximmode)
+                gp_corr_xip[i] = this_xip
+                gp_corr_cov[i] = this_cov
+                gp_corr_list.append(gp_corr_item)
 
-        gp_joint_cov = treecorr.estimate_multi_cov(gp_corr_list, var_method)
-        if save_gp_cov:
-            np.savetxt(os.path.join(outpath, full_cov_file), gp_joint_cov)
-        gp_joint_cov = treecorr.estimate_multi_cov(gp_corr_list, var_method)[
-            slice_, :
-        ][:, slice_]
-        if save_gp_cov:
-            if sub_const:
-                np.savetxt(os.path.join(outpath, cov_file), gp_joint_cov)
+            slice_ = []
+            if ximmode:
+                for i in range(num_of_corr):
+                    slice_.append(np.arange(nbins,2*nbins) + 2*i*nbins)
             else:
-                full_cov = np.zeros((num_of_corr*nbins + 2, num_of_corr*nbins + 2))
-                full_cov[:num_of_corr*nbins, :num_of_corr*nbins] = gp_joint_cov
-                full_cov[num_of_corr*nbins, num_of_corr*nbins] = mean_shear[2]
-                full_cov[num_of_corr*nbins + 1, num_of_corr*nbins + 1] = mean_shear[3]
-                np.savetxt(os.path.join(outpath, cov_file), full_cov)
+                for i in range(num_of_corr):
+                    slice_.append(np.arange(0, nbins) + i*2*nbins)
+            slice_ = np.array(slice_).reshape(-1)
 
+            gp_joint_cov = treecorr.estimate_multi_cov(gp_corr_list, var_method)
+            if save_gp_cov:
+                np.savetxt(os.path.join(outpath, full_cov_file), gp_joint_cov)
+            gp_joint_cov = treecorr.estimate_multi_cov(gp_corr_list, var_method)[
+                slice_, :
+            ][:, slice_]
+            if save_gp_cov:
+                if sub_const:
+                    np.savetxt(os.path.join(outpath, cov_file), gp_joint_cov)
+                else:
+                    full_cov = np.zeros((num_of_corr*nbins + 2, num_of_corr*nbins + 2))
+                    full_cov[:num_of_corr*nbins, :num_of_corr*nbins] = gp_joint_cov
+                    full_cov[num_of_corr*nbins, num_of_corr*nbins] = mean_shear[2]
+                    full_cov[num_of_corr*nbins + 1, num_of_corr*nbins + 1] = mean_shear[3]
+                    np.savetxt(os.path.join(outpath, cov_file), full_cov)
 
-        # measure the PSF-PSF correlations
-        pp_corr_xip = np.zeros(shape=(num_of_corr, num_of_corr, nbins))
-        pp_corr_cov = np.zeros(shape=(num_of_corr, num_of_corr, nbins, nbins))
-        pp_corr_list = []
+            # measure the PSF-PSF correlations
+            pp_corr_xip = np.zeros(shape=(num_of_corr, num_of_corr, nbins))
+            pp_corr_cov = np.zeros(shape=(num_of_corr, num_of_corr, nbins, nbins))
+            pp_corr_list = []
 
-        for i in range(num_of_corr):
-            for j in range(num_of_corr):
-                print('running pp correlations...', i, j)
-                logr, this_xip, this_cov, pp_corr_item = get_corr(
-                    psf_cat_list[i], psf_cat_list[j], var_method, 
-                    min_sep=theta_min, max_sep=theta_max, nbins=nbins, ximmode=ximmode)
-                pp_corr_cov[i][j] = this_cov
-                pp_corr_xip[i][j] = this_xip
-                pp_corr_list.append(pp_corr_item)
+            for i in range(num_of_corr):
+                for j in range(num_of_corr):
+                    print('running pp correlations...', i, j)
+                    logr, this_xip, this_cov, pp_corr_item = get_corr(
+                        psf_cat_list[i], psf_cat_list[j], var_method, 
+                        min_sep=theta_min, max_sep=theta_max, nbins=nbins, ximmode=ximmode)
+                    pp_corr_cov[i][j] = this_cov
+                    pp_corr_xip[i][j] = this_xip
+                    pp_corr_list.append(pp_corr_item)
 
-        slice_ = []
-        if ximmode:
-            for i in range(num_of_corr**2):
-                slice_.append(np.arange(nbins, 2*nbins) + i*2*nbins)
-        else:
-            for i in range(num_of_corr**2):
-                slice_.append(np.arange(0, nbins) + i*2*nbins)
-        slice_ = np.array(slice_).reshape(-1)
+            slice_ = []
+            if ximmode:
+                for i in range(num_of_corr**2):
+                    slice_.append(np.arange(nbins, 2*nbins) + i*2*nbins)
+            else:
+                for i in range(num_of_corr**2):
+                    slice_.append(np.arange(0, nbins) + i*2*nbins)
+            slice_ = np.array(slice_).reshape(-1)
 
-        pp_joint_cov = treecorr.estimate_multi_cov(pp_corr_list, var_method)[
-            slice_, :
-        ][:, slice_]
+            pp_joint_cov = treecorr.estimate_multi_cov(pp_corr_list, var_method)[
+                slice_, :
+            ][:, slice_]
 
-        r = np.exp(logr)
+            r = np.exp(logr)
 
-        pp_corr = pp_corr_xip
-        pp_corr_cov = pp_corr_cov
-        gp_corr = gp_corr_xip
+            pp_corr = pp_corr_xip
+            pp_corr_cov = pp_corr_cov
+            gp_corr = gp_corr_xip
 
-        if ximmode:
-            outf = "full_correlation_psf_xim.pkl"
-        else:
-            outf = "full_correlation_psf_xip.pkl"
-        
-        with open(os.path.join(outpath, outf), 'wb') as f:
-            pickle.dump([r, gp_corr, pp_corr,  psf_const1, psf_const2, egal_mean, pp_corr_cov, pp_joint_cov, gp_corr_cov ], f)
+            if ximmode:
+                outf = "full_correlation_psf_xim.pkl"
+            else:
+                outf = "full_correlation_psf_xip.pkl"
+            
+            with open(os.path.join(outpath, outf), 'wb') as f:
+                pickle.dump([r, gp_corr, pp_corr,  psf_const1, psf_const2, egal_mean, pp_corr_cov, pp_joint_cov, gp_corr_cov ], f)
 
 if __name__ == "__main__":
     main()
